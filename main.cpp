@@ -3,32 +3,29 @@
 #include <SFML/System.hpp>
 #include <SFML/Graphics.hpp>
 #include <valarray>
+#include <vector>
 #include <iostream>
 #include <cmath>
 
-class bichito{
-	public:
-		bichito():health(10),position(2){
-			sprite.SetPosition(0,0);
-			sprite.SetSize( sf::Vector2f(20,20) );
-			sprite.SetOutlineColor(sf::Color::Red);
-			sprite.SetFillColor(sf::Color::Blue);
-			sprite.SetOrigin(10,10);
-		}
-		void move( std::valarray<double> delta){
-			double half_size[] = {sprite.GetSize().x/2,sprite.GetSize().y/2};
+class objeto{
+public:
+	typedef std::valarray<double> vector;
 
-			position += delta;
-			for(size_t K=0; K<position.size(); ++K){
-				if(position[K]-half_size[K]<0) position[K] = half_size[K];
-				if(position[K]+half_size[K]>400) position[K] = 400-half_size[K];
-			}
-			sprite.SetPosition( position[0], position[1] );
-			//std::cerr << position[0] << ';' << position[1] << ' ';
-		}
-		std::valarray<double> position;
-		sf::RectangleShape sprite;
-		int health;
+	objeto();
+	objeto(const vector&, const vector&);
+	vector position() const;
+	vector dimension() const;
+protected:
+	vector position_, dimension_;
+};
+
+class bichito: public objeto{
+public:
+	bichito();
+	bichito(const vector &pos, const vector &dim);
+	vector move( const vector &delta);
+private:
+	int health;
 };
 
 bool colision(sf::RectangleShape a, sf::RectangleShape b){
@@ -39,45 +36,34 @@ bool colision(sf::RectangleShape a, sf::RectangleShape b){
 	return dif.x<dim.x and dif.y<dim.y;
 }
 
-class terreno{
+class pelota: public objeto{
 public:
-	terreno(){
-		sprite.SetPosition(200,200);
-		sprite.SetOrigin(200,50);
-		sprite.SetSize( sf::Vector2f(400,100) );
-		sprite.SetFillColor(sf::Color::Green);
-	}
-	sf::RectangleShape sprite;
+	pelota(const vector &pos, const vector &vel);
+	pelota();
+	pelota::vector update(double time);
+private:
+	vector velocity_;
 };
 
-class pelota{
+class dibujo{
 public:
-	sf::Vector2f position, velocity;
-	pelota(){
-		sprite.SetPosition(position);
-		sprite.SetRadius(10);
-		sprite.SetOrigin(5,5);
-		sprite.SetFillColor(sf::Color::Yellow);
-	}
-	pelota(sf::Vector2f p, sf::Vector2f v): position(p), velocity(v){
-		sprite.SetPosition(position);
-		sprite.SetRadius(10);
-		sprite.SetOrigin(5,5);
-		sprite.SetFillColor(sf::Color::White);
-
-		std::cerr << velocity.x << ' ' << velocity.y << '\n';
-	}
-	void update(int time){
-		position += velocity;
-		sprite.SetPosition(position);
-	}
-	void texture( sf::Texture *texture ){
-		sprite.SetTexture(texture);
+	dibujo( objeto &obj, sf::Shape &sprite): sprite(sprite), obj(obj) {
+		sync();
+		sprite.SetOrigin(0.5,0.5);
+		sprite.SetScale( obj.dimension()[0], obj.dimension()[1] );
 	}
 	void Draw(sf::RenderWindow &w){
+		sync();
 		w.Draw(sprite);
 	}
-	sf::CircleShape sprite;
+private:
+	void sync(){
+		objeto::vector pos = obj.position(), dim = obj.dimension()/2.;
+		//sprite.SetOrigin(dim[0], dim[1]);
+		sprite.SetPosition(pos[0], pos[1]);
+	}
+	sf::Shape &sprite;
+	const objeto &obj;
 };
 
 
@@ -85,14 +71,21 @@ int main(int argc, char **argv){
 	sf::RenderWindow window( sf::VideoMode(400,400,32), "pool_friction");
 	window.SetFramerateLimit(60);
 	bichito player;
-	terreno obstaculo;
+	objeto obstaculo;
 	pelota bala;
 
-	sf::Image image;
-	image.LoadFromFile("pelota.png");
-	sf::Texture texture;
-	texture.LoadFromImage(image);
-	bala.texture( &texture );
+	std::vector<pelota> bullets;
+
+	sf::Image pelota_image;
+	sf::Texture pelota_texture;
+	pelota_image.LoadFromFile("pelota.png");
+	pelota_texture.LoadFromImage(pelota_image);
+
+	sf::CircleShape bullet_sprite(1);
+	sf::RectangleShape player_sprite( sf::Vector2f(1,1) );
+
+	bullet_sprite.SetFillColor( sf::Color::White );
+	player_sprite.SetFillColor( sf::Color::Green );
 
 	while( window.IsOpen() ){
 		window.Clear( sf::Color::Black );
@@ -106,90 +99,87 @@ int main(int argc, char **argv){
 				{
 					//std::cerr << event.MouseMove.X << ';' << event.MouseMove.Y << ' ';
 					sf::RectangleShape line;
-					line.SetPosition(player.sprite.GetPosition().x, player.sprite.GetPosition().y);
-					line.SetSize( sf::Vector2f(50,5) );
+					line.SetPosition( player.position()[0], player.position()[1] );
+					line.SetSize( sf::Vector2f(150,2) );
 					line.SetFillColor(sf::Color::Green);
 
 					line.Rotate( 
 						180+std::atan2(
-							player.sprite.GetPosition().y-event.MouseMove.Y,
-							player.sprite.GetPosition().x-event.MouseMove.X
+							player.position()[0]-event.MouseMove.Y,
+							player.position()[1]-event.MouseMove.X
 						)*180/M_PI
 					);
-					/*glColor3f(0,1,0);
-					glBegin(GL_LINE);{
-						glVertex2f(player.sprite.GetPosition().x, player.sprite.GetPosition().y);
-						glVertex2f(event.MouseMove.X, event.MouseMove.Y);
-					}glEnd();*/
 					window.Draw(line);
 				}
 					break;
 				case sf::Event::MouseButtonPressed:
-					bala = pelota( 
-						player.sprite.GetPosition(), 
-						sf::Vector2f( 
-							(event.MouseButton.X-player.sprite.GetPosition().x)/2,
-							(event.MouseButton.Y-player.sprite.GetPosition().y)/2)
-						);
-					bala.texture( &texture );
+				{
+					pelota::vector pos = player.position(), direction(2);
+					direction[0] = event.MouseButton.X-pos[0];
+					direction[1] = event.MouseButton.Y-pos[1];
+
+					double norm = (direction*direction).sum();
+
+					bullets.push_back(pelota( pos, direction/sqrt(norm)));
 					break;
-				/*case sf::Event::KeyPressed:
-					//std::cerr << "Key pressed ";
-					switch( event.Key.Code ){
-						case sf::Keyboard::Left:
-							delta[0] = -1;
-							delta[1] = 0;
-							break;
-						case sf::Keyboard::Right:
-							delta[0] = 1;
-							delta[1] = 0;
-							break;
-						case sf::Keyboard::Up:
-							delta[0] = 0;
-							delta[1] = -1;
-							break;
-						case sf::Keyboard::Down:
-							delta[0] = 0;
-							delta[1] = 1;
-							break;
-					}
-					player.move( 5.*delta );*/
+				}
 			}
 		}
 		std::valarray<double> delta(2);
 		if( sf::Keyboard::IsKeyPressed(sf::Keyboard::Left) ){
 			delta[0] = -1;
-			delta[1] = 0;
-		}
-		if( sf::Keyboard::IsKeyPressed(sf::Keyboard::Left) and
-			sf::Keyboard::IsKeyPressed(sf::Keyboard::Down) ) {
-			delta[0] = -1;
-			delta[1] = 1;
 		}
 		if( sf::Keyboard::IsKeyPressed(sf::Keyboard::Right) ){
 			delta[0] = 1;
-			delta[1] = 0;
 		}
 		if( sf::Keyboard::IsKeyPressed(sf::Keyboard::Up) ){
-			delta[0] = 0;
 			delta[1] = -1;
 		}
 		if( sf::Keyboard::IsKeyPressed(sf::Keyboard::Down) ){
-			delta[0] = 0;
 			delta[1] = 1;
 		}
 		player.move( 5.*delta );
-		if( colision(player.sprite, obstaculo.sprite) ){
+		/*if( colision(player.sprite, obstaculo.sprite) ){
 			std::cerr << 'X';
-		}
+		}*/
 
-		bala.update(1);
-		window.Draw(obstaculo.sprite);
-		window.Draw(player.sprite);
-		bala.Draw(window);
+		for(size_t K=0; K<bullets.size(); ++K){
+			bullets[K].update(8);
+			dibujo(bullets[K], player_sprite).Draw(window);
+		}
+		//dibujo(player, player_sprite).Draw(window);
+		dibujo(player, bullet_sprite).Draw(window);
+
 		window.Display();
 	}
 	return 0;
 }
 
+objeto::objeto():position_(2), dimension_(2){}
+objeto::objeto(const vector &pos, const vector &dim):position_(pos), dimension_(dim){}
+objeto::vector objeto::position() const{
+	return position_;
+}
+objeto::vector objeto::dimension() const{
+	return dimension_;
+}
+bichito::bichito():health(10){
+	position_[0] = position_[1] = 0;
+	dimension_[0] = dimension_[1] = 20;
+}
+bichito::bichito(const vector &pos, const vector &dim): objeto(pos,dim), health(10){}
+bichito::vector bichito::move( const vector &delta){
+	position_ += delta;
+	return position_;
+}
+pelota::pelota(const vector &pos, const vector &vel): objeto(pos, vector(2)), velocity_(vel){
+	dimension_[0] = dimension_[1] = 10;
+}
+pelota::pelota(): velocity_(2){
+	dimension_[0] = dimension_[1] = 10;
+}
+pelota::vector pelota::update(double time){
+	position_ += time*velocity_;
+	return position_;
+}
 
